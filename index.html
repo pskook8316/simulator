@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>박막 반사율 시뮬레이터</title>
+<title>박막 구조별 반사율 Simulator</title>
 <style>
   :root{
     color-scheme: light;
@@ -76,7 +76,8 @@
   .card{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; }
   .left-col{ display:flex; flex-direction:column; gap:16px; }
 
-  h1{ font-size:19px; margin:0 0 10px; color:var(--series-1); font-weight:700; }
+  #mainTitle{ font-size:26px; text-align:center; margin:4px 0 22px; color:var(--series-1); font-weight:800;
+    letter-spacing:-0.01em; }
   .desc{ font-size:12.5px; line-height:1.6; color:var(--text-secondary); margin:0 0 18px; }
 
   /* chart */
@@ -134,11 +135,17 @@
   button.secondary:hover{ background:var(--series-1-fill); }
 
   .note{ font-size:11px; color:var(--muted); line-height:1.5; margin-top:18px; border-top:1px solid var(--grid); padding-top:12px; }
+
+  .optBox{ border:1.5px dashed var(--series-1); border-radius:8px; padding:14px; margin-top:18px; background:var(--series-1-fill); }
+  .optBox .optTitle{ font-size:13px; font-weight:700; color:var(--series-1); margin-bottom:10px; }
+  .optResult{ font-size:12px; color:var(--text-primary); margin-top:10px; line-height:1.6; min-height:1em; }
+  .optResult b{ color:var(--series-1); }
 </style>
 </head>
 <body>
 <div id="topbar"></div>
 <div id="app">
+  <h1 id="mainTitle">박막 구조별 반사율 Simulator</h1>
   <div class="layout">
     <div class="left-col">
       <div class="card">
@@ -168,7 +175,6 @@
     </div>
 
     <div class="card">
-      <h1>박막 반사율 시뮬레이터</h1>
       <p class="desc">
         박막 간섭에 의한 반사율을 계산합니다. Fresnel 방정식과 특성 행렬법(Transfer&nbsp;Matrix&nbsp;Method)을
         이용해 200&ndash;2000&nbsp;nm 범위의 파장에서 다층 박막(최대 20개 층)의 반사율/투과율/흡수율을 구합니다.
@@ -217,6 +223,36 @@
       <div class="actions">
         <button class="primary" id="plotBtn">플롯</button>
         <button class="secondary" id="downloadBtn">다운로드</button>
+      </div>
+
+      <div class="optBox">
+        <div class="optTitle">🎯 목표 반사율로 최적 두께 찾기</div>
+        <div class="field">
+          <label class="title">대상 레이어:</label>
+          <select id="optLayer"></select>
+        </div>
+        <div class="twoCol">
+          <div class="field">
+            <label class="title">목표 파장:</label>
+            <div class="unitRow"><input type="number" id="optWavelength" value="550" step="1"><span class="unitLbl">nm</span></div>
+          </div>
+          <div class="field">
+            <label class="title">목표 반사율:</label>
+            <div class="unitRow"><input type="number" id="optTargetPct" value="0" step="0.1"><span class="unitLbl">%</span></div>
+          </div>
+        </div>
+        <div class="twoCol">
+          <div class="field">
+            <label class="title">탐색 두께 최소:</label>
+            <div class="unitRow"><input type="number" id="optMin" value="0" min="0" step="1"><span class="unitLbl">nm</span></div>
+          </div>
+          <div class="field">
+            <label class="title">탐색 두께 최대:</label>
+            <div class="unitRow"><input type="number" id="optMax" value="1000" min="1" step="1"><span class="unitLbl">nm</span></div>
+          </div>
+        </div>
+        <button class="primary" id="optimizeBtn" style="width:100%;">최적 두께 찾기</button>
+        <div class="optResult" id="optResult"></div>
       </div>
 
       <div class="note">
@@ -545,6 +581,21 @@ function renderLayerTable(){
 
   body.innerHTML = html;
   wireLayerEvents();
+  refreshOptLayerDropdown();
+}
+
+function refreshOptLayerDropdown(){
+  const sel = document.getElementById('optLayer');
+  if (!sel) return;
+  const prev = sel.value;
+  if (layers.length === 0){
+    sel.innerHTML = `<option value="">레이어 없음</option>`;
+    return;
+  }
+  sel.innerHTML = layers.map((l,i)=>
+    `<option value="${i}">${i+1}: ${MATERIALS[l.mat] ? MATERIALS[l.mat].label : l.mat} (${l.thick}nm)</option>`
+  ).join('');
+  if (prev !== '' && layers[parseInt(prev,10)]) sel.value = prev;
 }
 
 function addRowHtml(insertIdx){
@@ -669,6 +720,84 @@ function computeSpectrum(){
   return { lambdas, R, T, A };
 }
 
+/* ============================== 목표 반사율 -> 최적 두께 탐색 ==============================
+   대상 레이어 하나의 두께를 변수로 두고, 지정한 파장에서 목표 반사율(%)에 가장 가까운
+   두께를 찾는다. 1) 두께 범위를 촘촘히(최대 2000구간) 그리드 탐색해 전역 최적점 근처를 찾고,
+   2) 그 주변에서 golden-section search로 정밀화한다. (박막 간섭 때문에 반사율은 두께에 대해
+   진동하는 비단조 함수이므로 그리드 탐색으로 지역최소 문제를 피한다.) */
+function reflectanceAt(thickness, layerIdx, targetLam, pol, th0){
+  const matKeys = [incidentMat, ...layers.map(l=>l.mat), substrateMat];
+  const customList = [null, ...layers.map(l=>({n:l.cn,k:l.ck})), null];
+  const thicks = [0, ...layers.map((l,i)=> i===layerIdx ? thickness : l.thick), 0];
+  const nList = matKeys.map((mk,i)=>{
+    const {n,k} = getNK(mk, targetLam, customList[i]);
+    return C(n,k);
+  });
+  if (pol === 'mixed'){
+    const rs = coh_tmm('s', nList, thicks, th0, targetLam).R;
+    const rp = coh_tmm('p', nList, thicks, th0, targetLam).R;
+    return (rs+rp)/2*100;
+  }
+  return coh_tmm(pol, nList, thicks, th0, targetLam).R * 100;
+}
+
+function findOptimalThickness(){
+  const resultEl = document.getElementById('optResult');
+  const selEl = document.getElementById('optLayer');
+  const layerIdx = parseInt(selEl.value, 10);
+  if (Number.isNaN(layerIdx) || !layers[layerIdx]){
+    resultEl.textContent = '대상 레이어가 없습니다. 레이어를 먼저 추가하세요.';
+    return;
+  }
+  const targetLam = parseFloat(document.getElementById('optWavelength').value);
+  const targetPct = parseFloat(document.getElementById('optTargetPct').value);
+  const minT = Math.max(0, parseFloat(document.getElementById('optMin').value) || 0);
+  const maxT = parseFloat(document.getElementById('optMax').value) || 0;
+  if (!Number.isFinite(targetLam) || targetLam <= 0){
+    resultEl.textContent = '목표 파장을 올바르게 입력하세요.';
+    return;
+  }
+  if (!(maxT > minT)){
+    resultEl.textContent = '탐색 두께 범위가 올바르지 않습니다 (최대 > 최소).';
+    return;
+  }
+  const angleDeg = parseFloat(document.getElementById('angle').value) || 0;
+  const pol = document.querySelector('input[name="pol"]:checked').value;
+  const th0 = (angleDeg * Math.PI) / 180;
+
+  const N = Math.min(4000, Math.max(200, Math.round((maxT-minT)*4)));
+  const step = (maxT-minT)/N;
+  let bestT = minT, bestDiff = Infinity;
+  for (let i=0;i<=N;i++){
+    const t = minT + i*step;
+    const diff = Math.abs(reflectanceAt(t, layerIdx, targetLam, pol, th0) - targetPct);
+    if (diff < bestDiff){ bestDiff = diff; bestT = t; }
+  }
+  // golden-section refine around the coarse best point
+  let lo = Math.max(minT, bestT-step), hi = Math.min(maxT, bestT+step);
+  const gr = (Math.sqrt(5)-1)/2;
+  let c = hi - gr*(hi-lo), d = lo + gr*(hi-lo);
+  let fc = Math.abs(reflectanceAt(c, layerIdx, targetLam, pol, th0) - targetPct);
+  let fd = Math.abs(reflectanceAt(d, layerIdx, targetLam, pol, th0) - targetPct);
+  for (let iter=0; iter<50 && (hi-lo)>1e-4; iter++){
+    if (fc < fd){ hi = d; d = c; fd = fc; c = hi - gr*(hi-lo); fc = Math.abs(reflectanceAt(c, layerIdx, targetLam, pol, th0) - targetPct); }
+    else { lo = c; c = d; fc = fd; d = lo + gr*(hi-lo); fd = Math.abs(reflectanceAt(d, layerIdx, targetLam, pol, th0) - targetPct); }
+  }
+  const finalT = Math.round(((lo+hi)/2) * 100) / 100;
+  const finalR = reflectanceAt(finalT, layerIdx, targetLam, pol, th0);
+
+  layers[layerIdx].thick = finalT;
+  renderLayerTable();
+  document.getElementById('optLayer').value = String(layerIdx);
+  lastData = computeSpectrum();
+  drawChart();
+
+  const diff = Math.abs(finalR - targetPct);
+  resultEl.innerHTML = `찾은 두께: <b>${finalT.toFixed(2)} nm</b><br>` +
+    `${targetLam}nm에서 반사율 <b>${finalR.toFixed(3)}%</b> ` +
+    `(목표 ${targetPct}%와 차이 ${diff.toFixed(3)}%p)`;
+}
+
 /* ============================== 차트 렌더링 ============================== */
 let lastData = null;
 const canvas = document.getElementById('chart');
@@ -744,6 +873,7 @@ function drawChart(){
 
   const type = document.querySelector('input[name="plotType"]:checked').value;
   const series = type==='R' ? lastData.R : type==='T' ? lastData.T : lastData.A;
+  const seriesPct = series.map(v=>v*100);
   const lambdas = lastData.lambdas;
 
   const seriesColor = cssVar('--series-1') || '#4a3aa7';
@@ -755,10 +885,10 @@ function drawChart(){
 
   ctx.clearRect(0,0,W,H);
 
-  let dataMax = Math.max(0.001, ...series);
-  let yMax = Math.min(1, Math.ceil(dataMax*1.15*10)/10);
-  if (yMax < dataMax) yMax = Math.ceil(dataMax*10)/10;
-  yMax = Math.max(yMax, 0.1);
+  let dataMax = Math.max(0.1, ...seriesPct);
+  let yMax = Math.min(100, Math.ceil(dataMax*1.15/5)*5);
+  if (yMax < dataMax) yMax = Math.ceil(dataMax/5)*5;
+  yMax = Math.max(yMax, 5);
   const yStep = niceStep(yMax, 6);
   const yTickMax = Math.ceil(yMax/yStep)*yStep;
 
@@ -778,7 +908,7 @@ function drawChart(){
     const py = yToPx(y);
     ctx.beginPath(); ctx.moveTo(padL, py); ctx.lineTo(padL+plotW, py); ctx.stroke();
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(y.toFixed(yStep<1?1:0), padL-8, py);
+    ctx.fillText((yStep<1 ? y.toFixed(1) : Math.round(y))+'%', padL-8, py);
   }
   // axes baseline
   ctx.strokeStyle = axisColor;
@@ -809,13 +939,13 @@ function drawChart(){
   ctx.save();
   ctx.translate(14, padT+plotH/2);
   ctx.rotate(-Math.PI/2);
-  ctx.fillText(type==='R'?'Reflectance':type==='T'?'Transmittance':'Absorption', 0, 0);
+  ctx.fillText((type==='R'?'Reflectance':type==='T'?'Transmittance':'Absorption')+' (%)', 0, 0);
   ctx.restore();
 
   // area fill (파장별 색상 그라디언트로 채움)
   ctx.beginPath();
   ctx.moveTo(xToPx(lambdas[0]), yToPx(0));
-  for (let i=0;i<lambdas.length;i++) ctx.lineTo(xToPx(lambdas[i]), yToPx(series[i]));
+  for (let i=0;i<lambdas.length;i++) ctx.lineTo(xToPx(lambdas[i]), yToPx(seriesPct[i]));
   ctx.lineTo(xToPx(lambdas[lambdas.length-1]), yToPx(0));
   ctx.closePath();
   ctx.fillStyle = spectrumGradient(ctx, padL, padL+plotW, xMin, xMax, 0.32);
@@ -824,7 +954,7 @@ function drawChart(){
   // line
   ctx.beginPath();
   for (let i=0;i<lambdas.length;i++){
-    const px=xToPx(lambdas[i]), py=yToPx(series[i]);
+    const px=xToPx(lambdas[i]), py=yToPx(seriesPct[i]);
     if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
   }
   ctx.strokeStyle = seriesColor;
@@ -861,18 +991,19 @@ canvas.addEventListener('mousemove', (e)=>{
   drawChart();
   const type = document.querySelector('input[name="plotType"]:checked').value;
   const series = type==='R' ? lastData.R : type==='T' ? lastData.T : lastData.A;
-  const lam = lastData.lambdas[idx], val = series[idx];
+  const seriesPct = series.map(v=>v*100);
+  const lam = lastData.lambdas[idx], valPct = seriesPct[idx];
   const xMin=lastData.lambdas[0], xMax=lastData.lambdas[lastData.lambdas.length-1];
   const px = plotArea.padL + ((lam-xMin)/(xMax-xMin||1))*plotArea.plotW;
   const yTickMaxCurrent = (()=>{ // recompute same scale used in drawChart
-    let dataMax = Math.max(0.001, ...series);
-    let yMax = Math.min(1, Math.ceil(dataMax*1.15*10)/10);
-    if (yMax < dataMax) yMax = Math.ceil(dataMax*10)/10;
-    yMax = Math.max(yMax, 0.1);
+    let dataMax = Math.max(0.1, ...seriesPct);
+    let yMax = Math.min(100, Math.ceil(dataMax*1.15/5)*5);
+    if (yMax < dataMax) yMax = Math.ceil(dataMax/5)*5;
+    yMax = Math.max(yMax, 5);
     const yStep = niceStep(yMax, 6);
     return Math.ceil(yMax/yStep)*yStep;
   })();
-  const py = plotArea.padT + plotArea.plotH - (val/yTickMaxCurrent)*plotArea.plotH;
+  const py = plotArea.padT + plotArea.plotH - (valPct/yTickMaxCurrent)*plotArea.plotH;
 
   const [swR,swG,swB] = wavelengthToRGB(lam);
   const stripY = plotArea.padT+plotArea.plotH+6, stripH = 10;
@@ -899,7 +1030,7 @@ canvas.addEventListener('mousemove', (e)=>{
   tooltip.style.top = Math.max(py-46, 0) + 'px';
   tooltip.innerHTML = `<span style="display:inline-block;width:11px;height:11px;border-radius:3px;` +
     `background:rgb(${swR},${swG},${swB});border:1px solid rgba(128,128,128,0.4);vertical-align:middle;margin-right:6px;"></span>` +
-    `<b>${Math.round(lam)} nm</b><br>${val.toFixed(4)}`;
+    `<b>${Math.round(lam)} nm</b><br>${valPct.toFixed(2)}%`;
 });
 canvas.addEventListener('mouseleave', ()=>{ tooltip.style.display='none'; drawChart(); });
 window.addEventListener('resize', ()=> drawChart());
@@ -914,9 +1045,9 @@ document.getElementById('plotBtn').addEventListener('click', ()=>{
 });
 document.getElementById('downloadBtn').addEventListener('click', ()=>{
   if (!lastData) lastData = computeSpectrum();
-  let csv = 'wavelength_nm,R,T,A\n';
+  let csv = 'wavelength_nm,R(%),T(%),A(%)\n';
   for (let i=0;i<lastData.lambdas.length;i++){
-    csv += `${lastData.lambdas[i]},${lastData.R[i].toFixed(6)},${lastData.T[i].toFixed(6)},${lastData.A[i].toFixed(6)}\n`;
+    csv += `${lastData.lambdas[i]},${(lastData.R[i]*100).toFixed(4)},${(lastData.T[i]*100).toFixed(4)},${(lastData.A[i]*100).toFixed(4)}\n`;
   }
   const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
@@ -925,6 +1056,7 @@ document.getElementById('downloadBtn').addEventListener('click', ()=>{
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
+document.getElementById('optimizeBtn').addEventListener('click', findOptimalThickness);
 
 /* ============================== 초기화 ============================== */
 renderLayerTable();
