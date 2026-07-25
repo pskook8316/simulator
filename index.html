@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>박막 반사율 시뮬레이터</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f4f2f7;
+    --panel:          #ffffff;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --muted:          #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --series-1:       #4a3aa7;
+    --series-1-fill:  rgba(74,58,167,0.09);
+    --border:         rgba(11,11,11,0.10);
+    --header-grad:    linear-gradient(90deg,#4a3aa7,#8b6fd9,#4a3aa7);
+    --input-bg:       #ffffff;
+    --table-head-bg:  #3d2f8f;
+    --table-head-fg:  #ffffff;
+    --row-alt:        #f6f4f9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --panel:          #161616;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --muted:          #898781;
+      --grid:           #2c2c2a;
+      --axis:           #383835;
+      --series-1:       #9085e9;
+      --series-1-fill:  rgba(144,133,233,0.14);
+      --border:         rgba(255,255,255,0.10);
+      --header-grad:    linear-gradient(90deg,#3d2f8f,#6b57c9,#3d2f8f);
+      --input-bg:       #1f1f1f;
+      --table-head-bg:  #2a2170;
+      --table-head-fg:  #ffffff;
+      --row-alt:        #1d1d1d;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --panel:          #161616;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted:          #898781;
+    --grid:           #2c2c2a;
+    --axis:           #383835;
+    --series-1:       #9085e9;
+    --series-1-fill:  rgba(144,133,233,0.14);
+    --border:         rgba(255,255,255,0.10);
+    --header-grad:    linear-gradient(90deg,#3d2f8f,#6b57c9,#3d2f8f);
+    --input-bg:       #1f1f1f;
+    --table-head-bg:  #2a2170;
+    --table-head-fg:  #ffffff;
+    --row-alt:        #1d1d1d;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--page); color:var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  #topbar{ height:6px; background:var(--header-grad); }
+  #app{ max-width:1400px; margin:0 auto; padding:20px 20px 60px; }
+  .layout{ display:grid; grid-template-columns: 1fr 380px; gap:20px; align-items:start; }
+  @media (max-width: 980px){ .layout{ grid-template-columns: 1fr; } }
+
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .left-col{ display:flex; flex-direction:column; gap:16px; }
+
+  h1{ font-size:19px; margin:0 0 10px; color:var(--series-1); font-weight:700; }
+  .desc{ font-size:12.5px; line-height:1.6; color:var(--text-secondary); margin:0 0 18px; }
+
+  /* chart */
+  #chartWrap{ position:relative; width:100%; }
+  #chart{ width:100%; height:420px; display:block; }
+  #tooltip{ position:absolute; pointer-events:none; background:var(--panel); border:1px solid var(--border);
+    border-radius:6px; padding:6px 10px; font-size:12px; color:var(--text-primary); box-shadow:0 2px 8px rgba(0,0,0,0.12);
+    display:none; white-space:nowrap; z-index:5; }
+
+  /* layer table */
+  table.layers{ width:100%; border-collapse:collapse; font-size:13px; }
+  table.layers thead th{ background:var(--table-head-bg); color:var(--table-head-fg); font-weight:600;
+    text-align:left; padding:9px 10px; }
+  table.layers thead th.center, table.layers td.center{ text-align:center; }
+  table.layers tbody td{ padding:6px 10px; border-bottom:1px solid var(--grid); vertical-align:middle; }
+  table.layers tbody tr.altrow{ background:var(--row-alt); }
+  .addrow td{ padding:3px 10px; border-bottom:none; }
+  .addBtn{ background:var(--series-1); color:#fff; border:none; border-radius:4px; padding:3px 10px;
+    font-size:11px; cursor:pointer; font-weight:600; }
+  .addBtn:hover{ opacity:0.85; }
+  .delBtn{ background:none; border:none; color:#c0392b; font-size:15px; cursor:pointer; font-weight:700; line-height:1; }
+  .delBtn:hover{ opacity:0.7; }
+  select, input[type=number], input[type=text]{
+    background:var(--input-bg); color:var(--text-primary); border:1px solid var(--axis);
+    border-radius:5px; padding:5px 7px; font-size:13px; width:100%; }
+  .thickCell{ display:flex; align-items:center; gap:6px; }
+  .thickCell input{ width:70px; }
+  .nkCell{ display:flex; gap:4px; }
+  .nkCell input{ width:56px; }
+  .matCell select{ min-width:140px; }
+  .layerLabel{ font-weight:600; color:var(--text-secondary); }
+
+  .csvRow{ margin-top:10px; display:flex; align-items:center; gap:10px; }
+  .csvBtn{ background:transparent; border:1px dashed var(--axis); color:var(--text-secondary);
+    border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; }
+  .csvBtn:hover{ border-color:var(--series-1); color:var(--series-1); }
+  .csvHint{ font-size:11px; color:var(--muted); }
+
+  /* right panel */
+  .field{ margin-bottom:16px; }
+  .field label.title{ display:block; font-size:12.5px; font-weight:600; color:var(--text-secondary); margin-bottom:6px; }
+  .radioRow{ display:flex; gap:16px; flex-wrap:wrap; }
+  .radioRow label{ display:flex; align-items:center; gap:5px; font-size:13px; cursor:pointer; }
+  .twoCol{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .unitRow{ display:flex; align-items:center; gap:6px; }
+  .unitRow input{ flex:1; }
+  .unitLbl{ font-size:12px; color:var(--muted); white-space:nowrap; }
+
+  .actions{ display:flex; gap:10px; margin-top:20px; }
+  button.primary{ background:var(--series-1); color:#fff; border:none; border-radius:6px; padding:10px 22px;
+    font-size:14px; font-weight:600; cursor:pointer; flex:1; }
+  button.primary:hover{ opacity:0.88; }
+  button.secondary{ background:transparent; color:var(--series-1); border:1.5px solid var(--series-1); border-radius:6px;
+    padding:10px 22px; font-size:14px; font-weight:600; cursor:pointer; flex:1; }
+  button.secondary:hover{ background:var(--series-1-fill); }
+
+  .note{ font-size:11px; color:var(--muted); line-height:1.5; margin-top:18px; border-top:1px solid var(--grid); padding-top:12px; }
+</style>
+</head>
+<body>
+<div id="topbar"></div>
+<div id="app">
+  <div class="layout">
+    <div class="left-col">
+      <div class="card">
+        <div id="chartWrap">
+          <canvas id="chart"></canvas>
+          <div id="tooltip"></div>
+        </div>
+      </div>
+      <div class="card">
+        <table class="layers">
+          <thead>
+            <tr>
+              <th style="width:70px;">레이어</th>
+              <th>소재 유형</th>
+              <th class="center" style="width:190px;">두께 (nm)</th>
+              <th style="width:36px;"></th>
+            </tr>
+          </thead>
+          <tbody id="layerBody"></tbody>
+        </table>
+        <div class="csvRow">
+          <button class="csvBtn" id="csvAddBtn">+ CSV로 재료 추가</button>
+          <input type="file" id="csvFile" accept=".csv,.txt" style="display:none;">
+          <span class="csvHint">형식: wavelength_nm,n,k (헤더 줄 허용)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h1>박막 반사율 시뮬레이터</h1>
+      <p class="desc">
+        박막 간섭에 의한 반사율을 계산합니다. Fresnel 방정식과 특성 행렬법(Transfer&nbsp;Matrix&nbsp;Method)을
+        이용해 200&ndash;2000&nbsp;nm 범위의 파장에서 다층 박막(최대 20개 층)의 반사율/투과율/흡수율을 구합니다.
+      </p>
+
+      <div class="field">
+        <label class="title">다음을 플롯:</label>
+        <div class="radioRow">
+          <label><input type="radio" name="plotType" value="R" checked> Reflectance</label>
+          <label><input type="radio" name="plotType" value="T"> Transmittance</label>
+          <label><input type="radio" name="plotType" value="A"> Absorption</label>
+        </div>
+      </div>
+
+      <div class="twoCol">
+        <div class="field">
+          <label class="title">플롯 시작:</label>
+          <div class="unitRow"><input type="number" id="lamStart" value="200" step="1"><span class="unitLbl">nm</span></div>
+        </div>
+        <div class="field">
+          <label class="title">플롯 끝:</label>
+          <div class="unitRow"><input type="number" id="lamEnd" value="1000" step="1"><span class="unitLbl">nm</span></div>
+        </div>
+      </div>
+
+      <div class="twoCol">
+        <div class="field">
+          <label class="title">데이터 포인트 간격:</label>
+          <div class="unitRow"><input type="number" id="lamStep" value="1" min="0.1" step="0.5"><span class="unitLbl">nm</span></div>
+        </div>
+        <div class="field">
+          <label class="title">입사각:</label>
+          <div class="unitRow"><input type="number" id="angle" value="0" min="0" max="89" step="1"><span class="unitLbl">°</span></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="title">편광:</label>
+        <div class="radioRow">
+          <label><input type="radio" name="pol" value="s" checked> s</label>
+          <label><input type="radio" name="pol" value="p"> p</label>
+          <label><input type="radio" name="pol" value="mixed"> 혼합</label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="plotBtn">플롯</button>
+        <button class="secondary" id="downloadBtn">다운로드</button>
+      </div>
+
+      <div class="note">
+        재료 광학상수(n,k)는 대표적인 문헌 근사값입니다 (SiO2/BK7: Sellmeier, Al2O3/MgF2: 문헌 Sellmeier,
+        Ag/Au/Al: Drude 모델, ITO: 전형적인 스퍼터 박막 근사 테이블). 정밀 시뮬레이션이 필요하면
+        "CSV로 재료 추가" 기능으로 실측 n,k 데이터를 직접 등록하세요.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================== 복소수 유틸 ============================== */
+const C = (re, im=0) => ({re, im});
+const cadd = (a,b) => C(a.re+b.re, a.im+b.im);
+const csub = (a,b) => C(a.re-b.re, a.im-b.im);
+const cmul = (a,b) => C(a.re*b.re - a.im*b.im, a.re*b.im + a.im*b.re);
+const cdiv = (a,b) => { const d=b.re*b.re+b.im*b.im; return C((a.re*b.re+a.im*b.im)/d, (a.im*b.re-a.re*b.im)/d); };
+const cscale = (a,s) => C(a.re*s, a.im*s);
+const cabs2 = (a) => a.re*a.re + a.im*a.im;
+const cabs = (a) => Math.sqrt(cabs2(a));
+const cconj = (a) => C(a.re, -a.im);
+const csqrt = (a) => {
+  const r = cabs(a);
+  const re = Math.sqrt(Math.max(0,(r+a.re)/2));
+  let im = Math.sqrt(Math.max(0,(r-a.re)/2));
+  if (a.im < 0) im = -im;
+  return C(re, im);
+};
+const cexpi = (z) => { const e = Math.exp(-z.im); return C(e*Math.cos(z.re), e*Math.sin(z.re)); };
+const CONE = C(1,0), CZERO = C(0,0);
+
+/* ============================== TMM 엔진 (검증됨) ============================== */
+// n_list: complex refractive index array (N = n + ik, k>=0 흡수), 0=입사매질, last=기판
+// d_list: 두께(nm) 배열 (0, last 는 무시)
+// th0: 입사각(rad), lam: 진공 파장(nm)
+function coh_tmm(pol, n_list, d_list, th0, lam){
+  const N = n_list.length;
+  const n0 = n_list[0];
+  const sinTh0 = C(Math.sin(th0),0);
+  const cosTh = [C(Math.cos(th0),0)];
+  for (let j=1;j<N;j++){
+    const s = cdiv(cmul(n0, sinTh0), n_list[j]);
+    cosTh.push(csqrt(csub(CONE, cmul(s,s))));
+  }
+  function fresnel(j,k){
+    const nj=n_list[j], nk=n_list[k], cj=cosTh[j], ck=cosTh[k];
+    if (pol==='s'){
+      const den = cadd(cmul(nj,cj), cmul(nk,ck));
+      return { r: cdiv(csub(cmul(nj,cj),cmul(nk,ck)), den), t: cdiv(cscale(cmul(nj,cj),2), den) };
+    } else {
+      const den = cadd(cmul(nk,cj), cmul(nj,ck));
+      return { r: cdiv(csub(cmul(nk,cj),cmul(nj,ck)), den), t: cdiv(cscale(cmul(nj,cj),2), den) };
+    }
+  }
+  const delta = [];
+  for (let j=0;j<N;j++){
+    const kz = cscale(cmul(n_list[j], cosTh[j]), (2*Math.PI)/lam);
+    delta.push(cmul(kz, C(d_list[j],0)));
+  }
+  let M = [[CONE,CZERO],[CZERO,CONE]];
+  for (let j=0;j<N-1;j++){
+    const {r,t} = fresnel(j,j+1);
+    const I = [[cdiv(CONE,t), cdiv(r,t)],[cdiv(r,t), cdiv(CONE,t)]];
+    if (j===0){ M = I; }
+    else {
+      const dj = delta[j];
+      const P = [[cexpi(C(-dj.re,-dj.im)), CZERO],[CZERO, cexpi(dj)]];
+      const MP = [
+        [cadd(cmul(M[0][0],P[0][0]),cmul(M[0][1],P[1][0])), cadd(cmul(M[0][0],P[0][1]),cmul(M[0][1],P[1][1]))],
+        [cadd(cmul(M[1][0],P[0][0]),cmul(M[1][1],P[1][0])), cadd(cmul(M[1][0],P[0][1]),cmul(M[1][1],P[1][1]))]
+      ];
+      M = [
+        [cadd(cmul(MP[0][0],I[0][0]),cmul(MP[0][1],I[1][0])), cadd(cmul(MP[0][0],I[0][1]),cmul(MP[0][1],I[1][1]))],
+        [cadd(cmul(MP[1][0],I[0][0]),cmul(MP[1][1],I[1][0])), cadd(cmul(MP[1][0],I[0][1]),cmul(MP[1][1],I[1][1]))]
+      ];
+    }
+  }
+  const r = cdiv(M[1][0], M[0][0]);
+  const t = cdiv(CONE, M[0][0]);
+  const R = cabs2(r);
+  const nLast=n_list[N-1], cLast=cosTh[N-1], nFirst=n_list[0], cFirst=cosTh[0];
+  let T;
+  if (pol==='s') T = (cabs2(t) * cmul(nLast,cLast).re) / cmul(nFirst,cFirst).re;
+  else T = (cabs2(t) * cmul(nLast,cconj(cLast)).re) / cmul(nFirst,cconj(cFirst)).re;
+  let A = 1 - R - T;
+  if (A < 0 && A > -1e-9) A = 0;
+  return {R, T, A};
+}
+
+/* ============================== 재료 데이터베이스 (확장 가능) ==============================
+   각 재료는 kind 에 따라 파장(nm)마다 복소 굴절률 N = n + ik 를 반환한다.
+   새 재료 추가 예:
+     MATERIALS.MyMat = { label:'내 재료', kind:'table', data:[[wl_nm, n, k], ...] };
+   또는 CSV 업로드 버튼으로 런타임에 추가 가능 (wavelength_nm,n,k 형식).
+================================================================================ */
+const MATERIALS = {
+  Air:    { label:'Air',              kind:'const', n:1, k:0 },
+  Custom: { label:'Custom (n,k 직접입력)', kind:'custom' },
+  SiO2:   { label:'SiO2 (Fused Silica)', kind:'sellmeier',
+            B:[0.6961663,0.4079426,0.8974794],
+            Csq:[0.0684043*0.0684043, 0.1162414*0.1162414, 9.896161*9.896161] },
+  BK7:    { label:'BK7 (Glass)', kind:'sellmeier',
+            B:[1.03961212,0.231792344,1.01046945],
+            Csq:[0.00600069867, 0.0200179144, 103.560653] },
+  Al2O3:  { label:'Al2O3 (Sapphire)', kind:'sellmeier',
+            B:[1.4313493,0.65054713,5.3414021],
+            Csq:[0.0726631*0.0726631, 0.1193242*0.1193242, 18.028251*18.028251] },
+  MgF2:   { label:'MgF2', kind:'sellmeier',
+            B:[0.48755108,0.39875031,2.3120353],
+            Csq:[0.04338408*0.04338408, 0.09461442*0.09461442, 23.793604*23.793604] },
+  Si3N4:  { label:'Si3N4', kind:'sellmeier2', // n^2-1 form
+            B:[3.0249,40314],
+            Csq:[0.1353406*0.1353406, 1239.842*1239.842] },
+  TiO2:   { label:'TiO2 (Anatase, approx)', kind:'cauchy', A:2.114, Bc:0.0246, Dc:0, kUvEdge:380, kMax:0.9 },
+  ITO:    { label:'ITO (sputtered, approx)', kind:'table', data:[
+            [200,1.90,0.35],[250,1.85,0.15],[300,1.95,0.06],[350,2.05,0.02],
+            [400,2.05,0.010],[450,2.00,0.005],[500,1.95,0.003],[600,1.90,0.002],
+            [700,1.87,0.003],[800,1.85,0.006],[900,1.83,0.012],[1000,1.81,0.020],
+            [1200,1.77,0.050],[1500,1.70,0.110],[2000,1.55,0.250]
+          ]},
+  Ag: { label:'Ag (Silver, Drude approx)', kind:'drude', epsInf:3.91, wp:9.01, gamma:0.018 },
+  Au: { label:'Au (Gold, Drude approx, >600nm 권장)', kind:'drude', epsInf:1.54, wp:9.03, gamma:0.053 },
+  AlMetal: { label:'Al (Aluminum, Drude approx)', kind:'drude', epsInf:1.00, wp:14.98, gamma:0.047 },
+};
+
+function interpTable(data, lam){
+  if (lam <= data[0][0]) return {n:data[0][1], k:data[0][2]};
+  const last = data[data.length-1];
+  if (lam >= last[0]) return {n:last[1], k:last[2]};
+  for (let i=0;i<data.length-1;i++){
+    const a=data[i], b=data[i+1];
+    if (lam>=a[0] && lam<=b[0]){
+      const t=(lam-a[0])/(b[0]-a[0]);
+      return { n:a[1]+t*(b[1]-a[1]), k:a[2]+t*(b[2]-a[2]) };
+    }
+  }
+  return {n:last[1],k:last[2]};
+}
+
+function getNK(matKey, lamNm, customNK){
+  const m = MATERIALS[matKey];
+  if (!m) return {n:1,k:0};
+  switch(m.kind){
+    case 'const': return {n:m.n, k:m.k};
+    case 'custom': return customNK || {n:1.5,k:0};
+    case 'table': return interpTable(m.data, lamNm);
+    case 'sellmeier': {
+      const lu = lamNm/1000, l2 = lu*lu;
+      let n2 = 1;
+      for (let i=0;i<m.B.length;i++) n2 += (m.B[i]*l2)/(l2 - m.Csq[i]);
+      return { n: Math.sqrt(Math.max(n2,1e-6)), k:0 };
+    }
+    case 'sellmeier2': {
+      const lu = lamNm/1000, l2 = lu*lu;
+      let n2 = 1;
+      for (let i=0;i<m.B.length;i++) n2 += (m.B[i]*l2)/(l2 - m.Csq[i]);
+      return { n: Math.sqrt(Math.max(n2,1e-6)), k:0 };
+    }
+    case 'cauchy': {
+      const lu = lamNm/1000, l2=lu*lu;
+      const n = m.A + m.Bc/l2 + (m.Dc||0)/(l2*l2);
+      let k = 0;
+      if (m.kUvEdge && lamNm < m.kUvEdge){
+        k = m.kMax * (1 - lamNm/m.kUvEdge);
+      }
+      return {n, k: Math.max(0,k)};
+    }
+    case 'drude': {
+      const E = 1239.84 / lamNm; // eV
+      const wp2 = m.wp*m.wp;
+      const denom = C(E*E, E*m.gamma);
+      const term = cdiv(C(wp2,0), denom);
+      const eps = C(m.epsInf - term.re, -term.im);
+      const mag = cabs(eps);
+      let n = Math.sqrt(Math.max(0,(mag+eps.re)/2));
+      let k = Math.sqrt(Math.max(0,(mag-eps.re)/2));
+      if (eps.im < 0) k = -k;
+      return { n, k: Math.abs(k) };
+    }
+    default: return {n:1,k:0};
+  }
+}
+
+/* ============================== 레이어 스택 상태 ============================== */
+let incidentMat = 'Air';
+let substrateMat = 'SiO2';
+let layers = [
+  { mat:'Al2O3', thick:4, cn:1.6, ck:0 },
+  { mat:'Ag',    thick:1, cn:1.5, ck:0 },
+  { mat:'ITO',   thick:20, cn:1.9, ck:0 },
+];
+
+function matOptionsHtml(selected){
+  return Object.keys(MATERIALS).map(k =>
+    `<option value="${k}" ${k===selected?'selected':''}>${MATERIALS[k].label}</option>`
+  ).join('');
+}
+
+function renderLayerTable(){
+  const body = document.getElementById('layerBody');
+  let html = '';
+
+  html += `<tr>
+    <td class="layerLabel">중간</td>
+    <td class="matCell"><select data-role="incident">${matOptionsHtml(incidentMat)}</select></td>
+    <td class="center">&mdash;</td>
+    <td></td>
+  </tr>`;
+  html += addRowHtml(0);
+
+  layers.forEach((layer, i) => {
+    const alt = i % 2 === 1 ? 'altrow' : '';
+    const isCustom = layer.mat === 'Custom';
+    html += `<tr class="${alt}">
+      <td class="layerLabel">${i+1}</td>
+      <td class="matCell"><select data-role="layerMat" data-idx="${i}">${matOptionsHtml(layer.mat)}</select></td>
+      <td class="center">
+        <div class="thickCell">
+          <input type="number" min="0" step="0.1" value="${layer.thick}" data-role="layerThick" data-idx="${i}">
+          <span class="unitLbl">nm</span>
+          ${isCustom ? `<div class="nkCell">
+              <input type="number" step="0.01" value="${layer.cn}" title="n" data-role="layerCn" data-idx="${i}">
+              <input type="number" step="0.01" value="${layer.ck}" title="k" data-role="layerCk" data-idx="${i}">
+            </div>` : ''}
+        </div>
+      </td>
+      <td class="center"><button class="delBtn" data-role="del" data-idx="${i}" title="삭제">&times;</button></td>
+    </tr>`;
+    html += addRowHtml(i+1);
+  });
+
+  html += `<tr>
+    <td class="layerLabel">기판</td>
+    <td class="matCell"><select data-role="substrate">${matOptionsHtml(substrateMat)}</select></td>
+    <td class="center">&mdash;</td>
+    <td></td>
+  </tr>`;
+
+  body.innerHTML = html;
+  wireLayerEvents();
+}
+
+function addRowHtml(insertIdx){
+  return `<tr class="addrow"><td colspan="4"><button class="addBtn" data-role="add" data-idx="${insertIdx}">ADD</button></td></tr>`;
+}
+
+function wireLayerEvents(){
+  const body = document.getElementById('layerBody');
+  body.querySelectorAll('[data-role="add"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.dataset.idx,10);
+      layers.splice(idx, 0, { mat:'SiO2', thick:100, cn:1.5, ck:0 });
+      renderLayerTable();
+    });
+  });
+  body.querySelectorAll('[data-role="del"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.dataset.idx,10);
+      layers.splice(idx,1);
+      renderLayerTable();
+    });
+  });
+  body.querySelectorAll('[data-role="layerMat"]').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const idx = parseInt(sel.dataset.idx,10);
+      layers[idx].mat = sel.value;
+      renderLayerTable();
+    });
+  });
+  body.querySelectorAll('[data-role="layerThick"]').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const idx = parseInt(inp.dataset.idx,10);
+      layers[idx].thick = parseFloat(inp.value)||0;
+    });
+  });
+  body.querySelectorAll('[data-role="layerCn"]').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const idx = parseInt(inp.dataset.idx,10);
+      layers[idx].cn = parseFloat(inp.value)||0;
+    });
+  });
+  body.querySelectorAll('[data-role="layerCk"]').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const idx = parseInt(inp.dataset.idx,10);
+      layers[idx].ck = parseFloat(inp.value)||0;
+    });
+  });
+  const inc = body.querySelector('[data-role="incident"]');
+  if (inc) inc.addEventListener('change', ()=>{ incidentMat = inc.value; });
+  const sub = body.querySelector('[data-role="substrate"]');
+  if (sub) sub.addEventListener('change', ()=>{ substrateMat = sub.value; });
+}
+
+/* ============================== CSV 재료 추가 ============================== */
+document.getElementById('csvAddBtn').addEventListener('click', ()=>{
+  document.getElementById('csvFile').click();
+});
+document.getElementById('csvFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const lines = String(reader.result).split(/\r?\n/);
+    const data = [];
+    for (const line of lines){
+      const parts = line.split(/[,\t]/).map(s=>s.trim()).filter(s=>s.length);
+      if (parts.length < 3) continue;
+      const wl = parseFloat(parts[0]), n = parseFloat(parts[1]), k = parseFloat(parts[2]);
+      if (Number.isFinite(wl) && Number.isFinite(n) && Number.isFinite(k)) data.push([wl,n,k]);
+    }
+    if (data.length < 2){
+      alert('CSV 파싱 실패: wavelength_nm,n,k 형식의 숫자 데이터가 2행 이상 필요합니다.');
+      return;
+    }
+    data.sort((a,b)=>a[0]-b[0]);
+    const name = window.prompt('새 재료 이름을 입력하세요:', file.name.replace(/\.[^.]+$/,''));
+    if (!name) return;
+    const key = 'custom_' + name.replace(/[^a-zA-Z0-9가-힣]/g,'_') + '_' + Date.now();
+    MATERIALS[key] = { label: name + ' (CSV)', kind:'table', data };
+    renderLayerTable();
+    alert(`재료 "${name}" 이(가) 추가되었습니다. 레이어 드롭다운에서 선택할 수 있습니다.`);
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+/* ============================== 스펙트럼 계산 ============================== */
+function computeSpectrum(){
+  const lamStart = parseFloat(document.getElementById('lamStart').value);
+  const lamEnd = parseFloat(document.getElementById('lamEnd').value);
+  const lamStep = Math.max(0.1, parseFloat(document.getElementById('lamStep').value));
+  const angleDeg = parseFloat(document.getElementById('angle').value) || 0;
+  const pol = document.querySelector('input[name="pol"]:checked').value;
+  const th0 = (angleDeg * Math.PI) / 180;
+
+  const lo = Math.min(lamStart, lamEnd), hi = Math.max(lamStart, lamEnd);
+  const lambdas = [];
+  for (let l = lo; l <= hi + 1e-9; l += lamStep) lambdas.push(Math.round(l*1000)/1000);
+  if (lambdas.length === 0 || lambdas[lambdas.length-1] < hi) lambdas.push(hi);
+
+  const matKeys = [incidentMat, ...layers.map(l=>l.mat), substrateMat];
+  const thicks = [0, ...layers.map(l=>l.thick), 0];
+  const customList = [null, ...layers.map(l=>({n:l.cn,k:l.ck})), null];
+
+  const R=[], T=[], A=[];
+  for (const lam of lambdas){
+    const nList = matKeys.map((mk,i)=>{
+      const {n,k} = getNK(mk, lam, customList[i]);
+      return C(n, k);
+    });
+    let r,t,a;
+    if (pol === 'mixed'){
+      const rs = coh_tmm('s', nList, thicks, th0, lam);
+      const rp = coh_tmm('p', nList, thicks, th0, lam);
+      r = (rs.R+rp.R)/2; t=(rs.T+rp.T)/2; a=(rs.A+rp.A)/2;
+    } else {
+      const res = coh_tmm(pol, nList, thicks, th0, lam);
+      r=res.R; t=res.T; a=res.A;
+    }
+    R.push(r); T.push(t); A.push(a);
+  }
+  return { lambdas, R, T, A };
+}
+
+/* ============================== 차트 렌더링 ============================== */
+let lastData = null;
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+let plotArea = null;
+
+function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function niceStep(range, targetTicks){
+  const raw = range/targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw/mag;
+  let step;
+  if (norm < 1.5) step = 1;
+  else if (norm < 3) step = 2;
+  else if (norm < 7) step = 5;
+  else step = 10;
+  return step*mag;
+}
+
+function resizeCanvas(){
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(300, rect.width) * dpr;
+  canvas.height = 420 * dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function drawChart(){
+  if (!lastData) return;
+  resizeCanvas();
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width, H = 420;
+  const padL = 52, padR = 18, padT = 18, padB = 42;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  plotArea = {padL,padT,plotW,plotH,W,H};
+
+  const type = document.querySelector('input[name="plotType"]:checked').value;
+  const series = type==='R' ? lastData.R : type==='T' ? lastData.T : lastData.A;
+  const lambdas = lastData.lambdas;
+
+  const seriesColor = cssVar('--series-1') || '#4a3aa7';
+  const fillColor = cssVar('--series-1-fill') || 'rgba(74,58,167,0.09)';
+  const gridColor = cssVar('--grid') || '#e1e0d9';
+  const axisColor = cssVar('--axis') || '#c3c2b7';
+  const textSecondary = cssVar('--text-secondary') || '#52514e';
+  const muted = cssVar('--muted') || '#898781';
+
+  ctx.clearRect(0,0,W,H);
+
+  let dataMax = Math.max(0.001, ...series);
+  let yMax = Math.min(1, Math.ceil(dataMax*1.15*10)/10);
+  if (yMax < dataMax) yMax = Math.ceil(dataMax*10)/10;
+  yMax = Math.max(yMax, 0.1);
+  const yStep = niceStep(yMax, 6);
+  const yTickMax = Math.ceil(yMax/yStep)*yStep;
+
+  const xMin = lambdas[0], xMax = lambdas[lambdas.length-1];
+  const xStep = niceStep(xMax-xMin, 8);
+  const xTickStart = Math.ceil(xMin/xStep)*xStep;
+
+  const xToPx = (x)=> padL + ((x-xMin)/(xMax-xMin||1))*plotW;
+  const yToPx = (y)=> padT + plotH - (y/yTickMax)*plotH;
+
+  // gridlines + y labels
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = muted;
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 1;
+  for (let y=0; y<=yTickMax+1e-9; y+=yStep){
+    const py = yToPx(y);
+    ctx.beginPath(); ctx.moveTo(padL, py); ctx.lineTo(padL+plotW, py); ctx.stroke();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(y.toFixed(yStep<1?1:0), padL-8, py);
+  }
+  // x labels
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let x=xTickStart; x<=xMax+1e-9; x+=xStep){
+    const px = xToPx(x);
+    ctx.fillText(Math.round(x), px, padT+plotH+8);
+  }
+  // axes baseline
+  ctx.strokeStyle = axisColor;
+  ctx.beginPath(); ctx.moveTo(padL, padT+plotH); ctx.lineTo(padL+plotW, padT+plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+plotH); ctx.stroke();
+
+  // axis titles
+  ctx.fillStyle = textSecondary;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Wavelength (nm)', padL+plotW/2, H-6);
+  ctx.save();
+  ctx.translate(14, padT+plotH/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText(type==='R'?'Reflectance':type==='T'?'Transmittance':'Absorption', 0, 0);
+  ctx.restore();
+
+  // area fill
+  ctx.beginPath();
+  ctx.moveTo(xToPx(lambdas[0]), yToPx(0));
+  for (let i=0;i<lambdas.length;i++) ctx.lineTo(xToPx(lambdas[i]), yToPx(series[i]));
+  ctx.lineTo(xToPx(lambdas[lambdas.length-1]), yToPx(0));
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  for (let i=0;i<lambdas.length;i++){
+    const px=xToPx(lambdas[i]), py=yToPx(series[i]);
+    if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  }
+  ctx.strokeStyle = seriesColor;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+function findNearestIdx(mouseX){
+  if (!lastData || !plotArea) return -1;
+  const {padL, plotW} = plotArea;
+  const lambdas = lastData.lambdas;
+  const xMin = lambdas[0], xMax = lambdas[lambdas.length-1];
+  const frac = (mouseX - padL)/plotW;
+  const targetX = xMin + frac*(xMax-xMin);
+  let lo=0, hi=lambdas.length-1;
+  while (lo<hi){
+    const mid=(lo+hi)>>1;
+    if (lambdas[mid] < targetX) lo=mid+1; else hi=mid;
+  }
+  if (lo>0 && Math.abs(lambdas[lo-1]-targetX) < Math.abs(lambdas[lo]-targetX)) lo--;
+  return lo;
+}
+
+canvas.addEventListener('mousemove', (e)=>{
+  if (!lastData || !plotArea) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (mx < plotArea.padL || mx > plotArea.padL+plotArea.plotW || my < plotArea.padT || my > plotArea.padT+plotArea.plotH){
+    tooltip.style.display='none'; drawChart(); return;
+  }
+  const idx = findNearestIdx(mx);
+  if (idx < 0) return;
+  drawChart();
+  const type = document.querySelector('input[name="plotType"]:checked').value;
+  const series = type==='R' ? lastData.R : type==='T' ? lastData.T : lastData.A;
+  const lam = lastData.lambdas[idx], val = series[idx];
+  const xMin=lastData.lambdas[0], xMax=lastData.lambdas[lastData.lambdas.length-1];
+  const px = plotArea.padL + ((lam-xMin)/(xMax-xMin||1))*plotArea.plotW;
+  const yTickMaxCurrent = (()=>{ // recompute same scale used in drawChart
+    let dataMax = Math.max(0.001, ...series);
+    let yMax = Math.min(1, Math.ceil(dataMax*1.15*10)/10);
+    if (yMax < dataMax) yMax = Math.ceil(dataMax*10)/10;
+    yMax = Math.max(yMax, 0.1);
+    const yStep = niceStep(yMax, 6);
+    return Math.ceil(yMax/yStep)*yStep;
+  })();
+  const py = plotArea.padT + plotArea.plotH - (val/yTickMaxCurrent)*plotArea.plotH;
+
+  ctx.save();
+  ctx.strokeStyle = cssVar('--axis') || '#c3c2b7';
+  ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(px, plotArea.padT); ctx.lineTo(px, plotArea.padT+plotArea.plotH); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI*2);
+  ctx.fillStyle = cssVar('--series-1') || '#4a3aa7';
+  ctx.fill();
+  ctx.restore();
+
+  tooltip.style.display='block';
+  tooltip.style.left = Math.min(px+12, plotArea.W-120) + 'px';
+  tooltip.style.top = Math.max(py-40, 0) + 'px';
+  tooltip.innerHTML = `<b>${Math.round(lam)} nm</b><br>${val.toFixed(4)}`;
+});
+canvas.addEventListener('mouseleave', ()=>{ tooltip.style.display='none'; drawChart(); });
+window.addEventListener('resize', ()=> drawChart());
+
+/* radio change -> redraw without recompute */
+document.querySelectorAll('input[name="plotType"]').forEach(r=> r.addEventListener('change', drawChart));
+
+/* ============================== 플롯 / 다운로드 버튼 ============================== */
+document.getElementById('plotBtn').addEventListener('click', ()=>{
+  lastData = computeSpectrum();
+  drawChart();
+});
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  if (!lastData) lastData = computeSpectrum();
+  let csv = 'wavelength_nm,R,T,A\n';
+  for (let i=0;i<lastData.lambdas.length;i++){
+    csv += `${lastData.lambdas[i]},${lastData.R[i].toFixed(6)},${lastData.T[i].toFixed(6)},${lastData.A[i].toFixed(6)}\n`;
+  }
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'reflectance_spectrum.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+/* ============================== 초기화 ============================== */
+renderLayerTable();
+lastData = computeSpectrum();
+drawChart();
+
+})();
+</script>
+</body>
+</html>
