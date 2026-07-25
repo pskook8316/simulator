@@ -690,6 +690,40 @@ function niceStep(range, targetTicks){
   return step*mag;
 }
 
+/* 파장(nm) -> 가시광선 RGB 근사 색상 (Dan Bruton 알고리즘, R/G/B 성분만 사용).
+   가시광선 범위(380~780nm) 밖은 눈에 보이지 않으므로 중립 회색으로 표시한다. */
+function wavelengthToRGB(nm){
+  if (nm < 380 || nm > 780) return [128,128,128];
+  let R=0,G=0,B=0;
+  if (nm < 440){ R=-(nm-440)/(440-380); G=0; B=1; }
+  else if (nm < 490){ R=0; G=(nm-440)/(490-440); B=1; }
+  else if (nm < 510){ R=0; G=1; B=-(nm-510)/(510-490); }
+  else if (nm < 580){ R=(nm-510)/(580-510); G=1; B=0; }
+  else if (nm < 645){ R=1; G=-(nm-645)/(645-580); B=0; }
+  else { R=1; G=0; B=0; }
+  let factor;
+  if (nm < 420) factor = 0.3 + 0.7*(nm-380)/(420-380);
+  else if (nm < 701) factor = 1.0;
+  else factor = 0.3 + 0.7*(780-nm)/(780-700);
+  const gamma = 0.8;
+  const adjust = (c) => c===0 ? 0 : Math.round(255*Math.pow(c*factor, gamma));
+  return [adjust(R), adjust(G), adjust(B)];
+}
+function wavelengthToCSS(nm, alpha){
+  const [r,g,b] = wavelengthToRGB(nm);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+function spectrumGradient(ctx, x0, x1, xMin, xMax, alpha){
+  const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+  const steps = 48;
+  for (let i=0;i<=steps;i++){
+    const t = i/steps;
+    const nm = xMin + t*(xMax-xMin);
+    grad.addColorStop(t, wavelengthToCSS(nm, alpha));
+  }
+  return grad;
+}
+
 function resizeCanvas(){
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -703,9 +737,10 @@ function drawChart(){
   resizeCanvas();
   const rect = canvas.getBoundingClientRect();
   const W = rect.width, H = 420;
-  const padL = 52, padR = 18, padT = 18, padB = 42;
+  const padL = 52, padR = 18, padT = 18, padB = 56;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   plotArea = {padL,padT,plotW,plotH,W,H};
+  const stripY = padT+plotH+6, stripH = 10;
 
   const type = document.querySelector('input[name="plotType"]:checked').value;
   const series = type==='R' ? lastData.R : type==='T' ? lastData.T : lastData.A;
@@ -745,35 +780,45 @@ function drawChart(){
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.fillText(y.toFixed(yStep<1?1:0), padL-8, py);
   }
-  // x labels
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  for (let x=xTickStart; x<=xMax+1e-9; x+=xStep){
-    const px = xToPx(x);
-    ctx.fillText(Math.round(x), px, padT+plotH+8);
-  }
   // axes baseline
   ctx.strokeStyle = axisColor;
   ctx.beginPath(); ctx.moveTo(padL, padT+plotH); ctx.lineTo(padL+plotW, padT+plotH); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+plotH); ctx.stroke();
 
+  // 파장별 가시광선 색상 스펙트럼 띠 (x축 바로 아래, 항상 표시되는 색상 기준선)
+  ctx.fillStyle = spectrumGradient(ctx, padL, padL+plotW, xMin, xMax, 1);
+  ctx.fillRect(padL, stripY, plotW, stripH);
+  ctx.strokeStyle = axisColor;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padL+0.5, stripY+0.5, plotW-1, stripH-1);
+
+  // x labels (스펙트럼 띠 아래)
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = muted;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let x=xTickStart; x<=xMax+1e-9; x+=xStep){
+    const px = xToPx(x);
+    ctx.fillText(Math.round(x), px, stripY+stripH+6);
+  }
+
   // axis titles
   ctx.fillStyle = textSecondary;
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText('Wavelength (nm)', padL+plotW/2, H-6);
+  ctx.fillText('Wavelength (nm)', padL+plotW/2, H-8);
   ctx.save();
   ctx.translate(14, padT+plotH/2);
   ctx.rotate(-Math.PI/2);
   ctx.fillText(type==='R'?'Reflectance':type==='T'?'Transmittance':'Absorption', 0, 0);
   ctx.restore();
 
-  // area fill
+  // area fill (파장별 색상 그라디언트로 채움)
   ctx.beginPath();
   ctx.moveTo(xToPx(lambdas[0]), yToPx(0));
   for (let i=0;i<lambdas.length;i++) ctx.lineTo(xToPx(lambdas[i]), yToPx(series[i]));
   ctx.lineTo(xToPx(lambdas[lambdas.length-1]), yToPx(0));
   ctx.closePath();
-  ctx.fillStyle = fillColor;
+  ctx.fillStyle = spectrumGradient(ctx, padL, padL+plotW, xMin, xMax, 0.32);
   ctx.fill();
 
   // line
@@ -829,20 +874,32 @@ canvas.addEventListener('mousemove', (e)=>{
   })();
   const py = plotArea.padT + plotArea.plotH - (val/yTickMaxCurrent)*plotArea.plotH;
 
+  const [swR,swG,swB] = wavelengthToRGB(lam);
+  const stripY = plotArea.padT+plotArea.plotH+6, stripH = 10;
+
   ctx.save();
   ctx.strokeStyle = cssVar('--axis') || '#c3c2b7';
   ctx.setLineDash([3,3]);
-  ctx.beginPath(); ctx.moveTo(px, plotArea.padT); ctx.lineTo(px, plotArea.padT+plotArea.plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px, plotArea.padT); ctx.lineTo(px, stripY+stripH); ctx.stroke();
   ctx.setLineDash([]);
   ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI*2);
   ctx.fillStyle = cssVar('--series-1') || '#4a3aa7';
   ctx.fill();
+  // 스펙트럼 띠 위 현재 파장 위치 표시
+  ctx.beginPath(); ctx.arc(px, stripY+stripH/2, 5, 0, Math.PI*2);
+  ctx.fillStyle = `rgb(${swR},${swG},${swB})`;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
   ctx.restore();
 
   tooltip.style.display='block';
-  tooltip.style.left = Math.min(px+12, plotArea.W-120) + 'px';
-  tooltip.style.top = Math.max(py-40, 0) + 'px';
-  tooltip.innerHTML = `<b>${Math.round(lam)} nm</b><br>${val.toFixed(4)}`;
+  tooltip.style.left = Math.min(px+12, plotArea.W-140) + 'px';
+  tooltip.style.top = Math.max(py-46, 0) + 'px';
+  tooltip.innerHTML = `<span style="display:inline-block;width:11px;height:11px;border-radius:3px;` +
+    `background:rgb(${swR},${swG},${swB});border:1px solid rgba(128,128,128,0.4);vertical-align:middle;margin-right:6px;"></span>` +
+    `<b>${Math.round(lam)} nm</b><br>${val.toFixed(4)}`;
 });
 canvas.addEventListener('mouseleave', ()=>{ tooltip.style.display='none'; drawChart(); });
 window.addEventListener('resize', ()=> drawChart());
