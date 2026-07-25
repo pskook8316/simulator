@@ -220,11 +220,12 @@
       </div>
 
       <div class="note">
-        재료 광학상수(n,k)는 대표적인 문헌값입니다 (SiO2/BK7/Al2O3/MgF2: 문헌 Sellmeier 분산식,
-        Ag/Au: Babar &amp; Weaver 2015 실측 테이블, Al: Rakic 1995 실측 테이블(206.6&ndash;2066nm),
-        ITO: Minenkov et al. 2024 실측 테이블(글라스 기판 위 110nm 스퍼터 ITO, 191&ndash;1689nm; 그 이상
-        파장에서는 마지막 측정값을 그대로 유지). 정밀 시뮬레이션이 필요하면
-        "CSV로 재료 추가" 기능으로 실측 n,k 데이터를 직접 등록하세요.
+        재료 광학상수(n,k) 출처: SiO2/BK7/Al2O3/MgF2/Si3N4는 문헌 Sellmeier 분산식(Malitson,
+        Schott, Dodge, Luke et al. &ndash; 코드 주석 참조), Ag/Au는 Babar &amp; Weaver 2015,
+        Al은 Rakic 1995, ITO는 Minenkov et al. 2024 실측 테이블입니다 (ITO는 191&ndash;1689nm,
+        Al은 206.6&ndash;2066nm까지 실측 범위이며 그 밖은 마지막 값을 유지). TiO2는 아직 근사치이며
+        추후 실측 데이터로 교체 예정입니다. "CSV로 재료 추가" 기능으로 언제든 실측 n,k 데이터를
+        직접 등록할 수도 있습니다.
       </div>
     </div>
   </div>
@@ -314,29 +315,56 @@ function coh_tmm(pol, n_list, d_list, th0, lam){
 
 /* ============================== 재료 데이터베이스 (확장 가능) ==============================
    각 재료는 kind 에 따라 파장(nm)마다 복소 굴절률 N = n + ik 를 반환한다.
-   새 재료 추가 예:
-     MATERIALS.MyMat = { label:'내 재료', kind:'table', data:[[wl_nm, n, k], ...] };
-   또는 CSV 업로드 버튼으로 런타임에 추가 가능 (wavelength_nm,n,k 형식).
+
+   [상태 요약]
+   - SiO2/BK7/Al2O3/MgF2/Si3N4: 문헌 Sellmeier 분산식 (아래 SOURCE 주석 참조). 투명 유전체라
+     k=0 가정이 타당하며, Sellmeier 계수 자체가 실측 데이터를 피팅한 결과이므로 정확도가 높다.
+   - TiO2: 출처가 약한 Cauchy 근사치 (TODO: 실측 데이터로 교체 필요).
+   - Ag/Au/ITO/Al: 이미 실측 테이블로 교체됨 (아래 참조).
+
+   [나중에 실측(table) 데이터로 교체하는 방법 — Ag/Au/Al/ITO에 실제로 사용한 절차]
+   1. https://refractiveindex.info 에서 재료 검색 → 원하는 문헌(page) 선택
+   2. 해당 페이지의 실제 데이터 파일 경로를 GitHub에서 확인:
+        https://github.com/polyanskiy/refractiveindex.info-database
+        (경로 예: database/data/main/<원소>/nk/<저자>.yml,
+         비합금물질은 database/data/other/... 아래에 있을 수 있음 — repo 내 "code search"로 검색)
+   3. raw.githubusercontent.com 경로로 해당 .yml 파일을 받으면
+        "DATA: - type: tabulated nk / data: |" 아래에 "파장(µm) n k" 3열 텍스트가 있음
+   4. 파장을 nm으로 변환(×1000), 필요시 목표 범위(200~2000nm)로 자르고
+      점이 너무 많으면(수백 개) 40~60개로 다운샘플링
+   5. 아래처럼 교체:
+        MyMat: { label:'설명 (출처, 연도)', kind:'table', data:[[wl_nm, n, k], ...] }
+   6. index.html 을 열어 콘솔 에러 없이 그려지는지, 값이 물리적으로 말이 되는지(0<=R<=1 등) 확인
+
+   [코드 수정 없이 즉시 추가하는 방법]
+   좌측 하단 "+ CSV로 재료 추가" 버튼으로 wavelength_nm,n,k 형식 CSV를 업로드하면
+   런타임에 새 재료가 드롭다운에 즉시 추가된다 (MATERIALS 객체에 직접 추가하는 것과 동일한 효과).
 ================================================================================ */
 const MATERIALS = {
   Air:    { label:'Air',              kind:'const', n:1, k:0 },
   Custom: { label:'Custom (n,k 직접입력)', kind:'custom' },
-  SiO2:   { label:'SiO2 (Fused Silica)', kind:'sellmeier',
+  // SOURCE: I. H. Malitson, "Interspecimen comparison of the refractive index of fused silica," J. Opt. Soc. Am. 55, 1205 (1965)
+  SiO2:   { label:'SiO2 (Fused Silica, Malitson 1965)', kind:'sellmeier',
             B:[0.6961663,0.4079426,0.8974794],
             Csq:[0.0684043*0.0684043, 0.1162414*0.1162414, 9.896161*9.896161] },
-  BK7:    { label:'BK7 (Glass)', kind:'sellmeier',
+  // SOURCE: SCHOTT N-BK7 optical glass datasheet (standard Sellmeier fit)
+  BK7:    { label:'BK7 (Glass, Schott)', kind:'sellmeier',
             B:[1.03961212,0.231792344,1.01046945],
             Csq:[0.00600069867, 0.0200179144, 103.560653] },
-  Al2O3:  { label:'Al2O3 (Sapphire)', kind:'sellmeier',
+  // SOURCE: I. H. Malitson, "Refraction and Dispersion of Synthetic Sapphire," J. Opt. Soc. Am. 52, 1377 (1962)
+  Al2O3:  { label:'Al2O3 (Sapphire, Malitson 1962)', kind:'sellmeier',
             B:[1.4313493,0.65054713,5.3414021],
             Csq:[0.0726631*0.0726631, 0.1193242*0.1193242, 18.028251*18.028251] },
-  MgF2:   { label:'MgF2', kind:'sellmeier',
+  // SOURCE: M. J. Dodge, "Refractive properties of magnesium fluoride," Appl. Opt. 23, 1980 (1984)
+  MgF2:   { label:'MgF2 (Dodge 1984)', kind:'sellmeier',
             B:[0.48755108,0.39875031,2.3120353],
             Csq:[0.04338408*0.04338408, 0.09461442*0.09461442, 23.793604*23.793604] },
-  Si3N4:  { label:'Si3N4', kind:'sellmeier2', // n^2-1 form
+  // SOURCE: K. Luke et al., "Broadband mid-infrared frequency comb generation in a Si3N4 microresonator," Opt. Lett. 40, 4823 (2015)
+  Si3N4:  { label:'Si3N4 (Luke et al. 2015)', kind:'sellmeier2', // n^2-1 form
             B:[3.0249,40314],
             Csq:[0.1353406*0.1353406, 1239.842*1239.842] },
-  TiO2:   { label:'TiO2 (Anatase, approx)', kind:'cauchy', A:2.114, Bc:0.0246, Dc:0, kUvEdge:380, kMax:0.9 },
+  // TODO: 근사치. 위 절차대로 refractiveindex.info의 실측 TiO2 테이블로 교체 권장
+  TiO2:   { label:'TiO2 (Anatase, 근사치 - 실측 데이터 교체 예정)', kind:'cauchy', A:2.114, Bc:0.0246, Dc:0, kUvEdge:380, kMax:0.9 },
   ITO:    { label:'ITO (Minenkov et al. 2024, 110nm on glass)', kind:'table', data:[
             [191.46,2.0423,0.5957],[210.62,2.1492,0.6155],[229.79,2.2266,0.5877],[248.97,2.3284,0.5605],
             [268.15,2.4774,0.4170],[287.35,2.4486,0.1788],[306.55,2.3204,0.0698],[325.76,2.2251,0.0412],
